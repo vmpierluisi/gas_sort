@@ -2,6 +2,8 @@
 import argparse
 import os
 import deep_sort_app
+import motmetrics as mm
+import pandas as pd
 
 
 def parse_args():
@@ -48,7 +50,24 @@ if __name__ == "__main__":
         sequence_dir = os.path.join(args.mot_dir, sequence)
         detection_file = os.path.join(args.detection_dir, "%s.npy" % sequence)
         output_file = os.path.join(args.output_dir, "%s.txt" % sequence)
-        deep_sort_app.run(
-            sequence_dir, detection_file, output_file, args.min_confidence,
-            args.nms_max_overlap, args.min_detection_height,
-            args.max_cosine_distance, args.nn_budget, display=False)
+        #deep_sort_app.run(
+        #   sequence_dir, output_file, args.min_confidence,
+        #    args.nms_max_overlap, args.min_detection_height,
+        #    args.max_cosine_distance, args.nn_budget, display=False)
+
+    mm.lap.default_solver = 'scipy'
+    accs = []
+    names = []
+    for sequence in sequences:
+        gt_file = os.path.join(args.mot_dir, sequence, "gt/gt.txt")
+        res_file = os.path.join(args.output_dir, "%s.txt" % sequence)
+
+        gt = mm.io.loadtxt(gt_file, fmt="mot15-2D", min_confidence=1)
+        res = mm.io.loadtxt(res_file, fmt="mot15-2D")
+
+        accs.append(mm.utils.compare_to_groundtruth(gt, res, 'iou', distth=0.5))
+        names.append(sequence)
+
+    mh = mm.metrics.create()
+    summary = mh.compute_many(accs, metrics=mm.metrics.motchallenge_metrics, names=names, generate_overall=True)
+    print(mm.io.render_summary(summary, formatters=mh.formatters, namemap=mm.io.motchallenge_metric_names))
