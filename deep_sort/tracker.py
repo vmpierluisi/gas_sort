@@ -1,11 +1,28 @@
 # vim: expandtab:ts=4:sw=4
 from __future__ import absolute_import
 import numpy as np
-from . import kalman_filter
+from filters.base_filter import BaseFilter
+from filters.kalman_filter import KalmanFilter
 from . import linear_assignment
 from . import iou_matching
 from .track import Track
 
+
+def build_filter(name: str) -> BaseFilter:
+    if name == "kf":
+        from filters.kalman_filter import KalmanFilter
+        return KalmanFilter()
+    elif name == "ekf":
+        from filters.ekf import ExtendedKalmanFilter
+        return ExtendedKalmanFilter()
+    elif name == "ukf":
+        from filters.ukf import UnscentedKalmanFilter
+        return UnscentedKalmanFilter()
+    elif name == "gas":
+        from filters.gas_filter import GASFilter
+        return GASFilter()
+    else:
+        raise ValueError(f"Unknown filter: {name}")
 
 class Tracker:
     """
@@ -30,20 +47,20 @@ class Tracker:
         Maximum number of missed misses before a track is deleted.
     n_init : int
         Number of frames that a track remains in initialization phase.
-    kf : kalman_filter.KalmanFilter
+    kf : kalman_filter_old.KalmanFilter
         A Kalman filter to filter target trajectories in image space.
     tracks : List[Track]
         The list of active tracks at the current time step.
 
     """
 
-    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3):
+    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3, motion_filter=None):
         self.metric = metric
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
         self.n_init = n_init
 
-        self.kf = kalman_filter.KalmanFilter()
+        self.kf = motion_filter if motion_filter is not None else KalmanFilter()
         self.tracks = []
         self._next_id = 1
 

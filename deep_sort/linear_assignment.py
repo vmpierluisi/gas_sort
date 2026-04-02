@@ -2,8 +2,7 @@
 from __future__ import absolute_import
 import numpy as np
 from scipy.optimize import linear_sum_assignment
-from . import kalman_filter
-
+from filters import kalman_filter
 
 INFTY_COST = 1e+5
 

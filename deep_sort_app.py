@@ -14,7 +14,7 @@ from application_util import preprocessing
 from application_util import visualization
 from deep_sort import nn_matching
 from deep_sort.detection import Detection
-from deep_sort.tracker import Tracker
+from deep_sort.tracker import Tracker, build_filter
 from deep_sort.detect_yolo import Detect
 from ultralytics import YOLO
 
@@ -22,7 +22,7 @@ from ultralytics import YOLO
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 model_detect = YOLO('weights/yolov8n.pt')
-model_reid = torchreid.models.build_model('osnet_ain_x1_0', num_classes=1, pretrained=False)
+model_reid = torchreid.models.build_model('osnet_ain_x1_0', num_classes= 1, pretrained=False)
 torchreid.utils.load_pretrained_weights(model_reid, 'weights/osnet_ain_x1_0_msmt17_256x128.pth')
 model_reid.classifier = nn.Identity()
 model_reid = model_reid.to(device)
@@ -97,7 +97,7 @@ def gather_sequence_info(sequence_dir):
 
 def run(sequence_dir, output_file, min_confidence,
         nms_max_overlap, min_detection_height, max_cosine_distance,
-        nn_budget, display):
+        nn_budget, display, motion_filter):
     """Run multi-target tracker on a particular sequence.
 
     Parameters
@@ -127,7 +127,9 @@ def run(sequence_dir, output_file, min_confidence,
     seq_info = gather_sequence_info(sequence_dir)
     metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", max_cosine_distance, nn_budget)
-    tracker = Tracker(metric)
+
+    tracker = Tracker(metric, max_iou_distance=0.7, max_age=30, n_init=3,
+                      motion_filter=build_filter(motion_filter))
     results = []
 
     def frame_callback(vis, frame_idx):
@@ -224,6 +226,10 @@ def parse_args():
     parser.add_argument(
         "--display", help="Show intermediate tracking results",
         default=True, type=bool_string)
+    parser.add_argument(
+        "--filter", choices=["kf", "ekf", "ukf", "gas"], default="kf",
+        help="Motion filter to use in the tracker (default: kf)"
+    )
     return parser.parse_args()
 
 
@@ -232,4 +238,4 @@ if __name__ == "__main__":
     run(
         args.sequence_dir, args.output_file,
         args.min_confidence, args.nms_max_overlap, args.min_detection_height,
-        args.max_cosine_distance, args.nn_budget, args.display)
+        args.max_cosine_distance, args.nn_budget, args.display, args.filter)
