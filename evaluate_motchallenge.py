@@ -5,6 +5,11 @@ import deep_sort_app
 import motmetrics as mm
 import pandas as pd
 
+def bool_string(input_string):
+    if input_string not in {"True","False"}:
+        raise ValueError("Please Enter a valid True/False choice")
+    else:
+        return (input_string == "True")
 
 def parse_args():
     """ Parse command line arguments.
@@ -12,9 +17,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="MOTChallenge evaluation")
     parser.add_argument(
         "--mot_dir", help="Path to MOTChallenge directory (train or test)",
-        required=True)
-    parser.add_argument(
-        "--detection_dir", help="Path to detections.", default="detections",
         required=True)
     parser.add_argument(
         "--output_dir", help="Folder in which the results will be stored. Will "
@@ -37,6 +39,13 @@ def parse_args():
     parser.add_argument(
         "--nn_budget", help="Maximum size of the appearance descriptors "
         "gallery. If None, no budget is enforced.", type=int, default=100)
+    parser.add_argument(
+        "--display", help="Show intermediate tracking results",
+        default=False, type=bool_string)
+    parser.add_argument(
+        "--filter", choices=["kf", "ekf", "ukf", "gas"], default="kf",
+        help="Motion filter to use in the tracker (default: kf)"
+    )
     return parser.parse_args()
 
 
@@ -48,12 +57,11 @@ if __name__ == "__main__":
     for sequence in sequences:
         print("Running sequence %s" % sequence)
         sequence_dir = os.path.join(args.mot_dir, sequence)
-        detection_file = os.path.join(args.detection_dir, "%s.npy" % sequence)
         output_file = os.path.join(args.output_dir, "%s.txt" % sequence)
-        #deep_sort_app.run(
-        #   sequence_dir, output_file, args.min_confidence,
-        #    args.nms_max_overlap, args.min_detection_height,
-        #    args.max_cosine_distance, args.nn_budget, display=False)
+        deep_sort_app.run(
+           sequence_dir, output_file, args.min_confidence,
+            args.nms_max_overlap, args.min_detection_height,
+            args.max_cosine_distance, args.nn_budget, args.display, args.filter)
 
     mm.lap.default_solver = 'scipy'
     accs = []

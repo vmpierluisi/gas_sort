@@ -19,7 +19,7 @@ chi2inv95 = {
     9: 16.919}
 
 
-class KalmanFilter(BaseFilter):
+class GASFilter(BaseFilter):
     """
     Standard linear Kalman filter with a constant acceleration (CA) motion model.
 
@@ -44,7 +44,7 @@ class KalmanFilter(BaseFilter):
         P_k = (I - K_k @ H) @ P_k|k-1
     """
 
-    def __init__(self):
+    def __init__(self, alpha=0.001, beta=0.95):
         # Defining the Transition matrix
         dt=1
         _transition_matrix = np.eye(12)
@@ -65,6 +65,30 @@ class KalmanFilter(BaseFilter):
         self._std_weight_aspect_p = 1e-2
         self._std_weight_aspect_v = 1e-3
         self._std_weight_aspect_a = 1e-4
+
+        self.alpha = alpha
+        self.beta = beta
+
+    def _symmetrize(self, matrix):
+        return 0.5 * (matrix + matrix.T)
+
+    def _make_positive_definite(self, matrix, initial_jitter=1e-6, max_attempts=6):
+        matrix = self._symmetrize(matrix)
+        jitter = initial_jitter
+
+        for _ in range(max_attempts):
+            try:
+                cholesky(matrix, lower=True, check_finite=False)
+                return matrix
+            except np.linalg.LinAlgError:
+                matrix = matrix + jitter * np.eye(matrix.shape[0])
+                jitter *= 10
+
+        # Final fallback: clip tiny/negative eigenvalues to keep the matrix usable.
+        eigvals, eigvecs = np.linalg.eigh(matrix)
+        eigvals = np.clip(eigvals, initial_jitter, None)
+        matrix = eigvecs @ np.diag(eigvals) @ eigvecs.T
+        return self._symmetrize(matrix)
 
     def _noise_matrices(self, mean):
         """
@@ -112,6 +136,7 @@ class KalmanFilter(BaseFilter):
             by 10 to reflect higher initial uncertainty after seeing a single frame.
 
         """
+
         h = measurement[3]
         mean = np.zeros(12)
         mean[:4] = measurement[:4]
@@ -129,9 +154,14 @@ class KalmanFilter(BaseFilter):
                                    (10*self._std_weight_acceleration*h)**2
                                  ])
         covariance = np.diag(init_var_trans)
-        return mean, covariance
+        F0 = self._transition_matrix
+        omega = (1 - self.beta) * F0
+        self.F0 = F0
+        self.omega = omega
 
-    def predict(self, mean, covariance):
+        return mean, covariance, F0
+
+    def predict(self, mean, covariance, F):
         """Run Kalman filter prediction step.
 
         Parameters
@@ -152,12 +182,13 @@ class KalmanFilter(BaseFilter):
         """
         Q, _ = self._noise_matrices(mean)
 
-        mean = self._transition_matrix @ mean
-        covariance = self._transition_matrix @ covariance @ self._transition_matrix.T + Q
+        mean = F @ mean
+        covariance = F @ covariance @ F.T + Q
+        covariance = self._make_positive_definite(covariance)
 
-        return mean, covariance, None
+        return mean, covariance, F
 
-    def update(self, mean, covariance, measurement):
+    def update(self, mean, covariance, measurement, F):
         """
         Run Kalman filter correction step.
 
@@ -181,17 +212,33 @@ class KalmanFilter(BaseFilter):
         _, R = self._noise_matrices(mean)
 
         S = self._measurement_matrix @ covariance @ self._measurement_matrix.T + R
+        S = self._make_positive_definite(S)
 
         cholesky_factor, lower = cho_factor(
             S, lower=True, check_finite=False)
 
         K = cho_solve((cholesky_factor, lower),
                       np.dot(covariance, self._measurement_matrix.T).T,check_finite=False).T
-
+        innovation = measurement - self._measurement_matrix @ mean
         new_mean = mean + K @ (measurement - self._measurement_matrix @ mean)
         new_covariance = (np.eye(12) - K @ self._measurement_matrix) @ covariance
+        new_covariance = self._make_positive_definite(new_covariance)
 
-        return new_mean, new_covariance, None
+        s = self._measurement_matrix.T @ np.outer(innovation, mean)
+        new_F = self.omega + self.alpha * s + self.beta * F
+
+        """
+        U, s, Vt = np.linalg.svd(new_F)
+        s = np.clip(s, 0.5, 2.0)
+        new_F = U @ np.diag(s) @ Vt
+        """
+
+        rho = np.max(np.abs(np.linalg.eigvals(new_F)))
+        if rho > 2.0:
+            new_F = new_F * (2.0 / rho)
+
+
+        return new_mean, new_covariance, new_F
 
     def gating_distance(self, mean, covariance, measurements,
                         only_position=False):
@@ -229,9 +276,12 @@ class KalmanFilter(BaseFilter):
         mean = self._measurement_matrix @ mean
         covariance = self._measurement_matrix @ covariance @ self._measurement_matrix.T + R
 
+
         if only_position:
             mean, covariance = mean[:2], covariance[:2, :2]
             measurements = measurements[:, :2]
+
+        covariance = self._make_positive_definite(covariance)
 
         cholesky_factor = cholesky(covariance, lower=True)
         distance = measurements - mean

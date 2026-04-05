@@ -18,7 +18,7 @@ class BaseFilter(ABC):
     """
 
     @abstractmethod
-    def initiate(self, measurement: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def initiate(self, measurement: np.ndarray) -> tuple[np.ndarray, np.ndarray, any]:
         """
         Create a new track from an unassociated measurement.
 
@@ -37,8 +37,8 @@ class BaseFilter(ABC):
 
     @abstractmethod
     def predict(
-        self, mean: np.ndarray, covariance: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
+        self, mean: np.ndarray, covariance: np.ndarray, F: any
+    ) -> tuple[np.ndarray, np.ndarray, any]:
         """
         Propagate state distribution one time step forward.
 
@@ -59,7 +59,8 @@ class BaseFilter(ABC):
         mean: np.ndarray,
         covariance: np.ndarray,
         measurement: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        F: any
+    ) -> tuple[np.ndarray, np.ndarray, any]:
         """
         Incorporate a new measurement into the state estimate.
 

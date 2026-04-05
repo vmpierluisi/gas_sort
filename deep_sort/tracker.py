@@ -13,7 +13,7 @@ def build_filter(name: str) -> BaseFilter:
         from filters.kalman_filter import KalmanFilter
         return KalmanFilter()
     elif name == "ekf":
-        from filters.ekf import ExtendedKalmanFilter
+        from filters.ext_kalman_filter import ExtendedKalmanFilter
         return ExtendedKalmanFilter()
     elif name == "ukf":
         from filters.ukf import UnscentedKalmanFilter
@@ -54,11 +54,12 @@ class Tracker:
 
     """
 
-    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3, motion_filter=None):
+    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3, motion_filter=None, F=None):
         self.metric = metric
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
         self.n_init = n_init
+        self.F = F
 
         self.kf = motion_filter if motion_filter is not None else KalmanFilter()
         self.tracks = []
@@ -148,8 +149,8 @@ class Tracker:
         return matches, unmatched_tracks, unmatched_detections
 
     def _initiate_track(self, detection):
-        mean, covariance = self.kf.initiate(detection.to_xyah())
+        mean, covariance, F = self.kf.initiate(detection.to_xyah())
         self.tracks.append(Track(
             mean, covariance, self._next_id, self.n_init, self.max_age,
-            detection.feature))
+            detection.feature, F=F))
         self._next_id += 1
