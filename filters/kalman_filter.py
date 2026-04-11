@@ -129,9 +129,9 @@ class KalmanFilter(BaseFilter):
                                    (10*self._std_weight_acceleration*h)**2
                                  ])
         covariance = np.diag(init_var_trans)
-        return mean, covariance
+        return mean, covariance, None
 
-    def predict(self, mean, covariance):
+    def predict(self, mean, covariance, F=None):
         """Run Kalman filter prediction step.
 
         Parameters
@@ -157,7 +157,7 @@ class KalmanFilter(BaseFilter):
 
         return mean, covariance, None
 
-    def update(self, mean, covariance, measurement):
+    def update(self, mean, covariance, measurement, F=None):
         """
         Run Kalman filter correction step.
 

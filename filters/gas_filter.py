@@ -21,74 +21,90 @@ chi2inv95 = {
 
 class GASFilter(BaseFilter):
     """
-    Standard linear Kalman filter with a constant acceleration (CA) motion model.
+    Generalized Autoregressive Score (GAS) filter for bounding-box tracking.
 
     State vector (12-dim):
-        x = [x, y, a, h, x', y', a', h', x'', y'', a'', h'']
-    where (x, y) is bounding box centre, a = w/h, h is height.
+        x_t = [x, y, a, h, x', y', a', h', x'', y'', a'', h'']
+        where (x, y) = bounding-box centre, a = w/h, h = height.
+        Primes denote velocities, double-primes accelerations.
 
     Measurement vector (4-dim):
-        z = [x, y, a, h]
+        z_t = [x, y, a, h]
 
-    KF System:
-        x_k = Fx_{k-1} + w_k, with w ~ N(0, Q)
-        z_k = Hx_{k-1} + v_k, with v ~ N(0, R)
+    -----------------------------------------------------------------------
+    Observation model  (linear, time-invariant)
+    -----------------------------------------------------------------------
+        z_t = H x_t + v_t,        v_t ~ N(0, R_t)
 
-        Prediction:
-        x^_k|k-1 = Fx^_{k-1}
-        P_k|k-1 = F @ P_k-1 @ F.T + Q
+    H = [I_4 | 0_4 | 0_4]  (4x12)  — we only observe positions.
 
-        Update:
-        K_k = P_k|k-1 @ H.T @ (H @ P_k|k-1 @ H.T + R)^-1
-        x^_k = x^_k|k-1 + K_k (z_k - H @ x^_k|k-1)
-        P_k = (I - K_k @ H) @ P_k|k-1
+    -----------------------------------------------------------------------
+    Transition model  (linear, time-VARYING via GAS)
+    -----------------------------------------------------------------------
+        x_t = F_t x_{t-1} + u_t,  u_t ~ N(0, Q_t)
+
+    F_0 is the standard constant-acceleration matrix; thereafter F_t is
+    updated by the GAS recursion below.
+
+    -----------------------------------------------------------------------
+    GAS(1,1) recursion for F_t  (inverse-Fisher scaling)
+    -----------------------------------------------------------------------
+        s_t   = I_t^{-1}  nabla_t        (scaled score)
+        F_t   = omega + alpha * s_t + beta * F_{t-1}
+
+    where
+        nabla_t  = d log p(z_t | z_{1:t-1}) / d F_{t-1}
+                   (score of the predictive log-likelihood w.r.t. F)
+        I_t      = E[-d^2 log p / d F^2]  (Fisher information for F)
+        omega    = (1 - beta) * F_0        (intercept, ensures F -> F_0
+                                            when innovations vanish)
+        alpha    = learning rate for the score signal
+        beta     = exponential-smoothing weight on the previous F
+
+    See the `update` method for the full derivation of nabla_t, I_t, and
+    their ratio.
+    -----------------------------------------------------------------------
     """
 
-    def __init__(self, alpha=0.001, beta=0.95):
+    def __init__(self, alpha=0.02, beta=0.9):
+        """
+        Parameters
+        ----------
+        alpha : float
+            GAS learning rate — scales the score contribution to F_t.
+        beta : float
+            GAS smoothing weight — controls how much of F_{t-1} carries over.
+        """
+        # GAS hyper-parameters
+        self.alpha = alpha
+        self.beta = beta
+
         # Defining the Transition matrix
-        dt=1
-        _transition_matrix = np.eye(12)
-        _transition_matrix[0:4, 4:8] = dt * np.eye(4)
-        _transition_matrix[0:4, 8:12] = ((dt ** 2) / 2) * np.eye(4)
-        _transition_matrix[4:8, 8:12] = dt * np.eye(4)
-        self._transition_matrix = _transition_matrix
+        dt = 1
+        F0 = np.eye(12)
+        F0[0:4, 4:8]   = dt * np.eye(4)
+        F0[0:4, 8:12]  = ((dt ** 2) / 2) * np.eye(4)
+        F0[4:8, 8:12]  = dt * np.eye(4)
+        self._transition_matrix = F0
 
         # Defining the Measurement matrix
         self._measurement_matrix = np.eye(4, 12)
+        self.fisher_diag = np.ones((12, 12)) * 1e-6
+        self.fisher_count=0
+
+        # GAS intercept omega
+        # omega = (1 - beta) * F_0 so that F -> F_0 at steady state.
+        self.omega = (1 - self.beta) * F0
 
         # Motion and observation uncertainty are chosen relative to the current
         # state estimate. These weights control the amount of uncertainty in
         # the model.
-        self._std_weight_position = 1 / 20
-        self._std_weight_velocity = 1 / 160
-        self._std_weight_acceleration = 1 / 1280
-        self._std_weight_aspect_p = 1e-2
-        self._std_weight_aspect_v = 1e-3
-        self._std_weight_aspect_a = 1e-4
-
-        self.alpha = alpha
-        self.beta = beta
-
-    def _symmetrize(self, matrix):
-        return 0.5 * (matrix + matrix.T)
-
-    def _make_positive_definite(self, matrix, initial_jitter=1e-6, max_attempts=6):
-        matrix = self._symmetrize(matrix)
-        jitter = initial_jitter
-
-        for _ in range(max_attempts):
-            try:
-                cholesky(matrix, lower=True, check_finite=False)
-                return matrix
-            except np.linalg.LinAlgError:
-                matrix = matrix + jitter * np.eye(matrix.shape[0])
-                jitter *= 10
-
-        # Final fallback: clip tiny/negative eigenvalues to keep the matrix usable.
-        eigvals, eigvecs = np.linalg.eigh(matrix)
-        eigvals = np.clip(eigvals, initial_jitter, None)
-        matrix = eigvecs @ np.diag(eigvals) @ eigvecs.T
-        return self._symmetrize(matrix)
+        self._std_weight_position     = 1 / 20    # position noise
+        self._std_weight_velocity     = 1 / 160   # velocity noise
+        self._std_weight_acceleration = 1 / 1280  # acceleration noise
+        self._std_weight_aspect_p     = 1     # aspect-ratio position noise
+        self._std_weight_aspect_v     = 1      # aspect-ratio velocity noise
+        self._std_weight_aspect_a     = 1      # aspect-ratio acceleration noise
 
     def _noise_matrices(self, mean):
         """
@@ -120,168 +136,109 @@ class GASFilter(BaseFilter):
 
     def initiate(self, measurement):
         """
-        Create track from unassociated measurement.
+        Create a new track from an unassociated detection.
 
         Parameters
         ----------
-        measurement : ndarray
-            Bounding box coordinates (x, y, a, h)
+        measurement : ndarray, shape (4,)
+            Bounding box as (x, y, a, h).
 
         Returns
         -------
-        (ndarray, ndarray)
-            Returns the mean vector (12 dimensional) and covariance matrix (12x12
-            dimensional) of the new track. Unobserved velocities and accelerations
-            are initialized to 0 mean. Velocities and accelerations have been multiplied
-            by 10 to reflect higher initial uncertainty after seeing a single frame.
-
+        mean : ndarray, shape (12,)
+            Initial state.  Positions from measurement; velocities and
+            accelerations set to zero.
+        covariance : ndarray, shape (12, 12)
+            Initial covariance.  Velocities/accelerations get 10x larger
+            std-dev to reflect high uncertainty from a single frame.
+        F0 : ndarray, shape (12, 12)
+            Initial transition matrix (the constant-acceleration default).
         """
-
         h = measurement[3]
+
         mean = np.zeros(12)
         mean[:4] = measurement[:4]
-        init_var_trans = np.array([(2*self._std_weight_position*h)**2,
-                                   (2*self._std_weight_position*h)**2,
-                                   (2*self._std_weight_aspect_p)**2,
-                                   (2*self._std_weight_position*h)**2,
-                                   (10*self._std_weight_velocity*h)**2,
-                                   (10*self._std_weight_velocity*h)**2,
-                                   (10*self._std_weight_aspect_v)**2,
-                                   (10*self._std_weight_velocity*h)**2,
-                                   (10*self._std_weight_acceleration*h)**2,
-                                   (10*self._std_weight_acceleration*h)**2,
-                                   (10*self._std_weight_aspect_a)**2,
-                                   (10*self._std_weight_acceleration*h)**2
-                                 ])
-        covariance = np.diag(init_var_trans)
-        F0 = self._transition_matrix
-        omega = (1 - self.beta) * F0
-        self.F0 = F0
-        self.omega = omega
 
-        return mean, covariance, F0
+        # Initial covariance: 2x std for positions, 10x std for vel/acc
+        init_var_trans = np.array([
+            (2  * self._std_weight_position     * h)**2,
+            (2  * self._std_weight_position     * h)**2,
+            (2  * self._std_weight_aspect_p        )**2,
+            (2  * self._std_weight_position     * h)**2,
+            (10 * self._std_weight_velocity     * h)**2,
+            (10 * self._std_weight_velocity     * h)**2,
+            (10 * self._std_weight_aspect_v        )**2,
+            (10 * self._std_weight_velocity     * h)**2,
+            (10 * self._std_weight_acceleration * h)**2,
+            (10 * self._std_weight_acceleration * h)**2,
+            (10 * self._std_weight_aspect_a        )**2,
+            (10 * self._std_weight_acceleration * h)**2,
+        ])
+        covariance = np.diag(init_var_trans)
+
+        return mean, covariance, self._transition_matrix.copy()
 
     def predict(self, mean, covariance, F):
-        """Run Kalman filter prediction step.
-
-        Parameters
-        ----------
-        mean : ndarray
-            The 12 dimensional mean vector of the object state at the previous
-            time step.
-        covariance : ndarray
-            The 12x12 dimensional covariance matrix of the object state at the
-            previous time step.
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the mean vector and covariance matrix of the predicted
-            state. Unobserved velocities and accelerations are initialized to 0 mean.
-
-        """
         Q, _ = self._noise_matrices(mean)
 
         mean = F @ mean
         covariance = F @ covariance @ F.T + Q
-        covariance = self._make_positive_definite(covariance)
 
         return mean, covariance, F
 
     def update(self, mean, covariance, measurement, F):
-        """
-        Run Kalman filter correction step.
 
-        Parameters
-        ----------
-        mean : ndarray
-            The predicted state's mean vector (12 dimensional).
-        covariance : ndarray
-            The state's covariance matrix (12x12 dimensional).
-        measurement : ndarray
-            The 4 dimensional measurement vector (x, y, a, h), where (x, y)
-            is the center position, a the aspect ratio, and h the height of the
-            bounding box.
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the measurement-corrected state distribution.
-
-        """
         _, R = self._noise_matrices(mean)
+        H = self._measurement_matrix  # (4, 12)
+        R = H @ covariance @ H.T + R  # (4, 4)
+        R_inv = np.linalg.inv(R)
+        Fisher_inv = covariance @ H.T @ R_inv #PHR^-1
 
-        S = self._measurement_matrix @ covariance @ self._measurement_matrix.T + R
-        S = self._make_positive_definite(S)
+        # Innovation
+        innovation = measurement - H @ mean  # (4,)
 
-        cholesky_factor, lower = cho_factor(
-            S, lower=True, check_finite=False)
+        # GAS score
+        norm = max(np.dot(mean, mean), 1e-6)
+        score = np.outer(Fisher_inv@innovation, mean) / norm #
+        # H.T @ R_inv @ innovation
+        # GAS recursion: update F
+        new_F = self.omega + self.alpha * score + self.beta * F
 
-        K = cho_solve((cholesky_factor, lower),
-                      np.dot(covariance, self._measurement_matrix.T).T,check_finite=False).T
-        innovation = measurement - self._measurement_matrix @ mean
-        new_mean = mean + K @ (measurement - self._measurement_matrix @ mean)
-        new_covariance = (np.eye(12) - K @ self._measurement_matrix) @ covariance
-        new_covariance = self._make_positive_definite(new_covariance)
-
-        s = self._measurement_matrix.T @ np.outer(innovation, mean)
-        new_F = self.omega + self.alpha * s + self.beta * F
-
-        """
-        U, s, Vt = np.linalg.svd(new_F)
-        s = np.clip(s, 0.5, 2.0)
-        new_F = U @ np.diag(s) @ Vt
-        """
-
-        rho = np.max(np.abs(np.linalg.eigvals(new_F)))
-        if rho > 2.0:
-            new_F = new_F * (2.0 / rho)
-
+        new_mean = mean + Fisher_inv @ innovation
+        new_covariance = (np.eye(12) - Fisher_inv @ H) @ covariance
 
         return new_mean, new_covariance, new_F
 
     def gating_distance(self, mean, covariance, measurements,
                         only_position=False):
         """
-        Compute gating distance between state distribution and measurements.
+        Squared Mahalanobis distance for gating track–detection associations.
 
-        A suitable distance threshold can be obtained from `chi2inv95`. If
-        `only_position` is False, the chi-square distribution has 4 degrees of
-        freedom, otherwise 2.
+        Thresholds from `chi2inv95` (4 DOF full, 2 DOF position-only).
 
         Parameters
         ----------
-        mean : ndarray
-            Mean vector over the state distribution (12 dimensional).
-        covariance : ndarray
-            Covariance of the state distribution (12x12 dimensional).
-        measurements : ndarray
-            An Nx4 dimensional matrix of N measurements, each in
-            format (x, y, a, h) where (x, y) is the bounding box center
-            position, a the aspect ratio, and h the height.
-        only_position : Optional[bool]
-            If True, distance computation is done with respect to the bounding
-            box center position only.
+        mean : ndarray, shape (12,)      — predicted state
+        covariance : ndarray, (12, 12)   — predicted covariance
+        measurements : ndarray, (N, 4)   — candidate detections
+        only_position : bool             — use only (x, y) if True
 
         Returns
         -------
-        ndarray
-            Returns an array of length N, where the i-th element contains the
-            squared Mahalanobis distance between (mean, covariance) and
-            `measurements[i]`.
-
+        ndarray, shape (N,) — squared Mahalanobis distances
         """
-        _, R = self._noise_matrices(mean)
+        #_, R = self._noise_matrices(mean)
+        H = self._measurement_matrix  # (4, 12)
+        #R = H @ covariance @ H.T + R  # (4, 4)
 
-        mean = self._measurement_matrix @ mean
-        covariance = self._measurement_matrix @ covariance @ self._measurement_matrix.T + R
-
+        mean = H @ mean
+        covariance = H @ covariance @ H.T
 
         if only_position:
             mean, covariance = mean[:2], covariance[:2, :2]
             measurements = measurements[:, :2]
 
-        covariance = self._make_positive_definite(covariance)
+        #covariance = self._make_positive_definite(covariance)
 
         cholesky_factor = cholesky(covariance, lower=True)
         distance = measurements - mean
