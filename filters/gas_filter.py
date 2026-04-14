@@ -21,52 +21,33 @@ chi2inv95 = {
 
 class GASFilter(BaseFilter):
     """
-    Generalized Autoregressive Score (GAS) filter for bounding-box tracking.
+    GAS(1, 1)  filter with a constant acceleration (CA) motion model.
 
     State vector (12-dim):
-        x_t = [x, y, a, h, x', y', a', h', x'', y'', a'', h'']
-        where (x, y) = bounding-box centre, a = w/h, h = height.
-        Primes denote velocities, double-primes accelerations.
+        x = [x, y, a, h, x', y', a', h', x'', y'', a'', h'']
+    where (x, y) is bounding box centre, a = w/h, h is height.
 
     Measurement vector (4-dim):
-        z_t = [x, y, a, h]
+        z = [x, y, a, h]
 
-    -----------------------------------------------------------------------
-    Observation model  (linear, time-invariant)
-    -----------------------------------------------------------------------
-        z_t = H x_t + v_t,        v_t ~ N(0, R_t)
+    GAS System:
+        x_k = Fx_{k-1} + w_k, with w ~ N(0, Q)
+        z_k = Hx_{k-1} + v_k, with v ~ N(0, R)
 
-    H = [I_4 | 0_4 | 0_4]  (4x12)  — we only observe positions.
+        Prediction:
+        x_k|k-1 = Fx_{k-1}
+        P_k|k-1 = F @ P_k-1 @ F.T + Q
 
-    -----------------------------------------------------------------------
-    Transition model  (linear, time-VARYING via GAS)
-    -----------------------------------------------------------------------
-        x_t = F_t x_{t-1} + u_t,  u_t ~ N(0, Q_t)
-
-    F_0 is the standard constant-acceleration matrix; thereafter F_t is
-    updated by the GAS recursion below.
-
-    -----------------------------------------------------------------------
-    GAS(1,1) recursion for F_t  (inverse-Fisher scaling)
-    -----------------------------------------------------------------------
-        s_t   = I_t^{-1}  nabla_t        (scaled score)
-        F_t   = omega + alpha * s_t + beta * F_{t-1}
-
-    where
-        nabla_t  = d log p(z_t | z_{1:t-1}) / d F_{t-1}
-                   (score of the predictive log-likelihood w.r.t. F)
-        I_t      = E[-d^2 log p / d F^2]  (Fisher information for F)
-        omega    = (1 - beta) * F_0        (intercept, ensures F -> F_0
-                                            when innovations vanish)
-        alpha    = learning rate for the score signal
-        beta     = exponential-smoothing weight on the previous F
-
-    See the `update` method for the full derivation of nabla_t, I_t, and
-    their ratio.
-    -----------------------------------------------------------------------
+        Update:
+            Inverse Fisher information using score wrt x = Kalman gain
+        K_k = P_k|k-1 @ H.T @ (H @ P_k|k-1 @ H.T + R)^-1
+            Optimal GAS mean update follows Kalman filter update
+        x_k = x_k|k-1 + K_k (z_k - H @ x_k|k-1)
+            Optimal covariance update follows a observation-driven GAS consistent covariance
+        P_k = F @ P_k|k-1 @ F.T + Q
     """
 
-    def __init__(self, alpha=0.02, beta=0.9):
+    def __init__(self, alpha=0.1, beta=0.8):
         """
         Parameters
         ----------
@@ -102,9 +83,9 @@ class GASFilter(BaseFilter):
         self._std_weight_position     = 1 / 20    # position noise
         self._std_weight_velocity     = 1 / 160   # velocity noise
         self._std_weight_acceleration = 1 / 1280  # acceleration noise
-        self._std_weight_aspect_p     = 1     # aspect-ratio position noise
-        self._std_weight_aspect_v     = 1      # aspect-ratio velocity noise
-        self._std_weight_aspect_a     = 1      # aspect-ratio acceleration noise
+        self._std_weight_aspect_p     = 1e-2     # aspect-ratio position noise
+        self._std_weight_aspect_v     = 1e-3      # aspect-ratio velocity noise
+        self._std_weight_aspect_a     = 1e-4      # aspect-ratio acceleration noise
 
     def _noise_matrices(self, mean):
         """
@@ -179,6 +160,25 @@ class GASFilter(BaseFilter):
         return mean, covariance, self._transition_matrix.copy()
 
     def predict(self, mean, covariance, F):
+        """
+        Run GAS(1, 1) filter prediction step.
+
+        Parameters
+        ----------
+        mean : ndarray
+            The 12 dimensional mean vector of the object state at the previous
+            time step.
+        covariance : ndarray
+            The 12x12 dimensional covariance matrix of the object state at the
+            previous time step.
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            Returns the mean vector and covariance matrix of the predicted
+            state. Unobserved velocities and accelerations are initialized to 0 mean.
+
+        """
         Q, _ = self._noise_matrices(mean)
 
         mean = F @ mean
@@ -187,58 +187,90 @@ class GASFilter(BaseFilter):
         return mean, covariance, F
 
     def update(self, mean, covariance, measurement, F):
+        """
+        Run GAS(1, 1) filter correction step.
 
-        _, R = self._noise_matrices(mean)
-        H = self._measurement_matrix  # (4, 12)
-        R = H @ covariance @ H.T + R  # (4, 4)
-        R_inv = np.linalg.inv(R)
-        Fisher_inv = covariance @ H.T @ R_inv #PHR^-1
+        Parameters
+        ----------
+        mean : ndarray
+            The predicted state's mean vector (12 dimensional).
+        covariance : ndarray
+            The state's covariance matrix (12x12 dimensional).
+        measurement : ndarray
+            The 4 dimensional measurement vector (x, y, a, h), where (x, y)
+            is the center position, a the aspect ratio, and h the height of the
+            bounding box.
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            Returns the measurement-corrected state distribution.
+
+        """
+        Q, R = self._noise_matrices(mean)
+        H = self._measurement_matrix
+
+        # Calculating I^-1
+        R_pred = H @ covariance @ H.T + R
+        R_inv = np.linalg.inv(R_pred)
+        Fisher_inv = covariance @ H.T @ R_inv
 
         # Innovation
-        innovation = measurement - H @ mean  # (4,)
+        innovation = measurement - H @ mean
 
         # GAS score
         norm = max(np.dot(mean, mean), 1e-6)
-        score = np.outer(Fisher_inv@innovation, mean) / norm #
-        # H.T @ R_inv @ innovation
-        # GAS recursion: update F
+        score = np.outer(Fisher_inv@innovation, mean) / norm
+
+        # Update F
         new_F = self.omega + self.alpha * score + self.beta * F
 
+        # Update mean and covariance
         new_mean = mean + Fisher_inv @ innovation
-        new_covariance = (np.eye(12) - Fisher_inv @ H) @ covariance
+        new_covariance = new_F @ covariance @ new_F.T + Q
 
         return new_mean, new_covariance, new_F
 
     def gating_distance(self, mean, covariance, measurements,
                         only_position=False):
         """
-        Squared Mahalanobis distance for gating track–detection associations.
+        Compute gating distance between state distribution and measurements.
 
-        Thresholds from `chi2inv95` (4 DOF full, 2 DOF position-only).
+        A suitable distance threshold can be obtained from `chi2inv95`. If
+        `only_position` is False, the chi-square distribution has 4 degrees of
+        freedom, otherwise 2.
 
         Parameters
         ----------
-        mean : ndarray, shape (12,)      — predicted state
-        covariance : ndarray, (12, 12)   — predicted covariance
-        measurements : ndarray, (N, 4)   — candidate detections
-        only_position : bool             — use only (x, y) if True
+        mean : ndarray
+            Mean vector over the state distribution (12 dimensional).
+        covariance : ndarray
+            Covariance of the state distribution (12x12 dimensional).
+        measurements : ndarray
+            An Nx4 dimensional matrix of N measurements, each in
+            format (x, y, a, h) where (x, y) is the bounding box center
+            position, a the aspect ratio, and h the height.
+        only_position : Optional[bool]
+            If True, distance computation is done with respect to the bounding
+            box center position only.
 
         Returns
         -------
-        ndarray, shape (N,) — squared Mahalanobis distances
+        ndarray
+            Returns an array of length N, where the i-th element contains the
+            squared Mahalanobis distance between (mean, covariance) and
+            `measurements[i]`.
+
         """
-        #_, R = self._noise_matrices(mean)
+        _, R = self._noise_matrices(mean)
         H = self._measurement_matrix  # (4, 12)
-        #R = H @ covariance @ H.T + R  # (4, 4)
 
         mean = H @ mean
-        covariance = H @ covariance @ H.T
+        covariance = H @ covariance @ H.T + R
 
         if only_position:
             mean, covariance = mean[:2], covariance[:2, :2]
             measurements = measurements[:, :2]
-
-        #covariance = self._make_positive_definite(covariance)
 
         cholesky_factor = cholesky(covariance, lower=True)
         distance = measurements - mean

@@ -35,12 +35,12 @@ class KalmanFilter(BaseFilter):
         z_k = Hx_{k-1} + v_k, with v ~ N(0, R)
 
         Prediction:
-        x^_k|k-1 = Fx^_{k-1}
+        x_k|k-1 = Fx_{k-1}
         P_k|k-1 = F @ P_k-1 @ F.T + Q
 
         Update:
         K_k = P_k|k-1 @ H.T @ (H @ P_k|k-1 @ H.T + R)^-1
-        x^_k = x^_k|k-1 + K_k (z_k - H @ x^_k|k-1)
+        x_k = x_k|k-1 + K_k (z_k - H @ x_k|k-1)
         P_k = (I - K_k @ H) @ P_k|k-1
     """
 
@@ -132,7 +132,8 @@ class KalmanFilter(BaseFilter):
         return mean, covariance, None
 
     def predict(self, mean, covariance, F=None):
-        """Run Kalman filter prediction step.
+        """
+        Run Kalman filter prediction step.
 
         Parameters
         ----------

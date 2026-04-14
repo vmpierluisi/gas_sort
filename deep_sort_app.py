@@ -125,6 +125,7 @@ def run(sequence_dir, output_file, min_confidence,
 
     """
     seq_info = gather_sequence_info(sequence_dir)
+    seq_name = seq_info["sequence_name"]
     metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", max_cosine_distance, nn_budget)
 
@@ -138,7 +139,7 @@ def run(sequence_dir, output_file, min_confidence,
         # Load image and generate detections.
         image = cv2.imread(
             seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
-        detect = Detect(image, frame_idx, model_detect, model_reid, device)
+        detect = Detect(image, frame_idx, seq_name, model_detect, model_reid, device)
         detections = detect()
         detection_list = []
 
