@@ -110,10 +110,10 @@ class Visualization(object):
         self.viewer.image = image
 
     def draw_groundtruth(self, track_ids, boxes):
-        self.viewer.thickness = 2
+        self.viewer.thickness = 1
         for track_id, box in zip(track_ids, boxes):
-            self.viewer.color = create_unique_color_uchar(track_id)
-            self.viewer.rectangle(*box.astype(np.int64), label=str(track_id))
+            self.viewer.color = 0, 0, 255 #create_unique_color_uchar(track_id)
+            self.viewer.rectangle(*box.astype(np.int64)) #, label=str(track_id)
 
     def draw_detections(self, detections):
         self.viewer.thickness = 2

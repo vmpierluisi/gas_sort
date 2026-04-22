@@ -126,6 +126,7 @@ def run(sequence_dir, output_file, min_confidence,
     """
     seq_info = gather_sequence_info(sequence_dir)
     seq_name = seq_info["sequence_name"]
+    groundtruth = seq_info["groundtruth"]
     metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", max_cosine_distance, nn_budget)
 
@@ -133,7 +134,7 @@ def run(sequence_dir, output_file, min_confidence,
                       motion_filter=build_filter(motion_filter))
     results = []
 
-    def frame_callback(vis, frame_idx):
+    def frame_callback(vis, frame_idx, write=False):
         print("Processing frame %05d" % frame_idx)
 
         # Load image and generate detections.
@@ -167,6 +168,15 @@ def run(sequence_dir, output_file, min_confidence,
             vis.set_image(image.copy())
             vis.draw_detections(detections)
             vis.draw_trackers(tracker.tracks)
+
+        if write:
+            mask = groundtruth[:, 0].astype(int) == frame_idx
+            track_ids_gt = groundtruth[mask, 1].astype(int)
+            boxes_gt = groundtruth[mask, 2:6]  # x, y, w, h columns
+            vis.draw_groundtruth(track_ids_gt, boxes_gt)
+
+            if frame_idx % 20 ==0:
+                cv2.imwrite(f"detections/{seq_name}-{frame_idx}.png", vis.viewer.image)
 
         # Store results.
         for track in tracker.tracks:

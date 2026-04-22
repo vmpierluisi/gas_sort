@@ -16,7 +16,7 @@ def build_filter(name: str) -> BaseFilter:
         from filters.ext_kalman_filter import ExtendedKalmanFilter
         return ExtendedKalmanFilter()
     elif name == "ukf":
-        from filters.ukf import UnscentedKalmanFilter
+        from filters.unsc_kalman_filter import UnscentedKalmanFilter
         return UnscentedKalmanFilter()
     elif name == "gas":
         from filters.gas_filter import GASFilter
