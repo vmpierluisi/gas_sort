@@ -175,8 +175,8 @@ def run(sequence_dir, output_file, min_confidence,
             boxes_gt = groundtruth[mask, 2:6]  # x, y, w, h columns
             vis.draw_groundtruth(track_ids_gt, boxes_gt)
 
-            if frame_idx % 20 ==0:
-                cv2.imwrite(f"detections/{seq_name}-{frame_idx}.png", vis.viewer.image)
+            if frame_idx == 35: #% 20 ==0:
+                cv2.imwrite(f"detections/{seq_name}-{frame_idx}-2.png", vis.viewer.image)
 
         # Store results.
         for track in tracker.tracks:

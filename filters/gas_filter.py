@@ -179,7 +179,7 @@ class GASFilter(BaseFilter):
             state. Unobserved velocities and accelerations are initialized to 0 mean.
 
         """
-        Q, _ = self._noise_matrices(mean)
+        Q, R = self._noise_matrices(mean) # Remove R
 
         mean = F @ mean
         covariance = F @ covariance @ F.T + Q
@@ -213,20 +213,21 @@ class GASFilter(BaseFilter):
         # Calculating I^-1
         R_pred = H @ covariance @ H.T + R
         R_inv = np.linalg.inv(R_pred)
-        Fisher_inv = covariance @ H.T @ R_inv
+        # Kalman Gain
+        K = covariance @ H.T @ R_inv
 
         # Innovation
         innovation = measurement - H @ mean
 
         # GAS score
         norm = max(np.dot(mean, mean), 1e-6)
-        score = np.outer(Fisher_inv@innovation, mean) / norm
+        score = np.outer(K@innovation, mean) / norm
 
         # Update F
         new_F = self.omega + self.alpha * score + self.beta * F
 
         # Update mean and covariance
-        new_mean = mean + Fisher_inv @ innovation
+        new_mean = mean + K @ innovation
         new_covariance = new_F @ covariance @ new_F.T + Q
 
         return new_mean, new_covariance, new_F
