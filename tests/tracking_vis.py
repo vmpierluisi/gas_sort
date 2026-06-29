@@ -2,6 +2,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import cv2
 
+"""
 img_13_1 = cv2.imread("../detections/MOT16-13-500.png", cv2.IMREAD_COLOR_RGB)
 img_13_2 = cv2.imread("../detections/MOT16-13-520.png", cv2.IMREAD_COLOR_RGB)
 img_13_3 = cv2.imread("../detections/MOT16-13-540.png", cv2.IMREAD_COLOR_RGB)
@@ -57,21 +58,25 @@ plt.figure(figsize=(7, 5))
 plt.imshow(img_05)
 plt.margins(0)
 # Draw lines (x, y)
-"""
-plt.plot([0, 350], [250, 250], 'r:', linewidth=2)
-plt.plot([350, 350], [250, 480], 'r:', linewidth=2)
-plt.text(315, 240, "(x, y)", color="red", fontsize=12)
-# Draw line (h)
-plt.plot([430, 430], [441, 81], 'r:', linewidth=2)
-plt.text(435, 300, "(h)", color="red", fontsize=12)
-# Draw line (w)
-plt.plot([270, 420], [78, 78], 'r:', linewidth=2)
-plt.text(325, 70, "(w)", color="red", fontsize=12)
-#plt.title("Frame 35", fontsize=16)
-"""
 plt.xlabel("x-axis Coordinates", fontsize=14, y=0.04)
 plt.ylabel("y-axis Coordinates", fontsize=14, x=0.04)
 plt.subplots_adjust(bottom=0)
 plt.tight_layout()
 plt.savefig("../detections/MOT-coordinates.png", dpi=300)
+plt.show()
+"""
+
+img_09_1 = cv2.imread("../detections/MOT17-09-FRCNN-40.png", cv2.IMREAD_COLOR_RGB)
+img_09_2 = cv2.imread("../detections/MOT17-09-FRCNN-60.png", cv2.IMREAD_COLOR_RGB)
+img_09_3 = cv2.imread("../detections/MOT17-09-FRCNN-80.png", cv2.IMREAD_COLOR_RGB)
+
+# 3x1 Grid of MOT Sequences
+fig = plt.figure(figsize=(14, 3))
+plt.subplot(131); plt.imshow(img_09_1); plt.title("Frame 40", fontsize=10)
+plt.subplot(132); plt.imshow(img_09_2); plt.title("Frame 60", fontsize=10)
+plt.subplot(133); plt.imshow(img_09_3); plt.title("Frame 80", fontsize=10)
+fig.supxlabel("x-axis Coordinates", fontsize=10, y=0.01)
+fig.supylabel("y-axis Coordinates", fontsize=10, x=0.01)
+plt.tight_layout()
+plt.savefig("../detections/MOT-example-walk.png", dpi=300)
 plt.show()

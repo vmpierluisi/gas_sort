@@ -18,9 +18,24 @@ def build_filter(name: str) -> BaseFilter:
     elif name == "ukf":
         from filters.unsc_kalman_filter import UnscentedKalmanFilter
         return UnscentedKalmanFilter()
-    elif name == "gas":
-        from filters.gas_filter import GASFilter
+    elif name == "gas-x":
+        from filters.gas_filter_x import GASFilter
         return GASFilter()
+    elif name == "gas-f":
+        from filters.gas_filter_f import GASFilter
+        return GASFilter()
+    elif name == "gas-f-cv":
+        from filters.gas_filter_f_cv import GASFilter
+        return GASFilter()
+    elif name == "gas-pred-x":
+        from filters.gas_filter_pred_x import GASFilterPred
+        return GASFilterPred()
+    elif name == "gas-pred-f":
+        from filters.gas_filter_pred_f import GASFilterPred
+        return GASFilterPred()
+    elif name == "gas-local":
+        from filters.gas_filter_local import GASFilterPred
+        return GASFilterPred()
     else:
         raise ValueError(f"Unknown filter: {name}")
 

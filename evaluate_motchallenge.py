@@ -35,7 +35,7 @@ def parse_args():
         "detection overlap.", default=1.0, type=float)
     parser.add_argument(
         "--max_cosine_distance", help="Gating threshold for cosine distance "
-        "metric (object appearance).", type=float, default=0.2)
+        "metric (object appearance).", type=float, default=0.25)
     parser.add_argument(
         "--nn_budget", help="Maximum size of the appearance descriptors "
         "gallery. If None, no budget is enforced.", type=int, default=100)
@@ -43,7 +43,7 @@ def parse_args():
         "--display", help="Show intermediate tracking results",
         default=False, type=bool_string)
     parser.add_argument(
-        "--filter", choices=["kf", "ekf", "ukf", "gas"], default="kf",
+        "--filter", choices=["kf", "ekf", "ukf", "gas-x", "gas-f", "gas-pred-x", "gas-pred-f", "gas-local", "gas-f-cv"], default="kf",
         help="Motion filter to use in the tracker (default: kf)"
     )
     return parser.parse_args()

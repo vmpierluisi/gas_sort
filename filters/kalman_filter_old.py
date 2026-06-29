@@ -83,9 +83,9 @@ class KalmanFilter(object):
             1e-5,
             10 * self._std_weight_velocity * measurement[3]]
         covariance = np.diag(np.square(std))
-        return mean, covariance
+        return mean, covariance, None
 
-    def predict(self, mean, covariance):
+    def predict(self, mean, covariance, F=None):
         """Run Kalman filter prediction step.
 
         Parameters
@@ -120,9 +120,9 @@ class KalmanFilter(object):
         covariance = np.linalg.multi_dot((
             self._motion_mat, covariance, self._motion_mat.T)) + motion_cov
 
-        return mean, covariance
+        return mean, covariance, None
 
-    def project(self, mean, covariance):
+    def project(self, mean, covariance, F=None):
         """Project state distribution to measurement space.
 
         Parameters
@@ -149,9 +149,9 @@ class KalmanFilter(object):
         mean = np.dot(self._update_mat, mean)
         covariance = np.linalg.multi_dot((
             self._update_mat, covariance, self._update_mat.T))
-        return mean, covariance + innovation_cov
+        return mean, covariance + innovation_cov, None
 
-    def update(self, mean, covariance, measurement):
+    def update(self, mean, covariance, measurement, F=None):
         """Run Kalman filter correction step.
 
         Parameters
@@ -171,7 +171,7 @@ class KalmanFilter(object):
             Returns the measurement-corrected state distribution.
 
         """
-        projected_mean, projected_cov = self.project(mean, covariance)
+        projected_mean, projected_cov, _ = self.project(mean, covariance)
 
         chol_factor, lower = scipy.linalg.cho_factor(
             projected_cov, lower=True, check_finite=False)
@@ -183,7 +183,7 @@ class KalmanFilter(object):
         new_mean = mean + np.dot(innovation, kalman_gain.T)
         new_covariance = covariance - np.linalg.multi_dot((
             kalman_gain, projected_cov, kalman_gain.T))
-        return new_mean, new_covariance
+        return new_mean, new_covariance, None
 
     def gating_distance(self, mean, covariance, measurements,
                         only_position=False):
@@ -215,7 +215,7 @@ class KalmanFilter(object):
             `measurements[i]`.
 
         """
-        mean, covariance = self.project(mean, covariance)
+        mean, covariance, _ = self.project(mean, covariance)
         if only_position:
             mean, covariance = mean[:2], covariance[:2, :2]
             measurements = measurements[:, :2]

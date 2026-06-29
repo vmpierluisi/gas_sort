@@ -11,6 +11,6 @@ torchreid.utils.load_pretrained_weights(model_reid, '../weights/osnet_ain_x1_0_m
 model_reid.classifier = nn.Identity()
 model_reid.eval()
 
-image = cv2.imread("../MOT16/train/MOT16-02/img1/000001.jpg", cv2.IMREAD_COLOR)
+image = cv2.imread("../MOT17/train/MOT17-02-FRCNN-02/img1/000001.jpg", cv2.IMREAD_COLOR)
 detect = Detect(image, 1, model_detect, model_reid)
 print(detect())

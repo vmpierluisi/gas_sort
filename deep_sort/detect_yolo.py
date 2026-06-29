@@ -27,6 +27,7 @@ class Detect():
             x = self.transform(x)
             x = x.unsqueeze(0).to(self.device)
             x = self.model_reid(x)
+            x = torch.nn.functional.normalize(x, p=2, dim=1)
             x = x.cpu().squeeze().numpy()
 
         return x
@@ -40,6 +41,7 @@ class Detect():
         batch = torch.stack(tensors).to(self.device)  # (N, 3, 256, 128)
         with torch.no_grad():
             embeddings = self.model_reid(batch)  # single forward pass
+            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         return embeddings.cpu().numpy()  # (N, 512)
 
     def __call__(self):
