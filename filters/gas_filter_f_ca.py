@@ -234,7 +234,7 @@ class GASFilter(BaseFilter):
 
         # Joseph form KF covariance update
         #IKH = np.eye(12) - K @ H
-        #new_covariance = IKH @ covariance @ IKH.T + K @ R @ K.T
+        #new_covariance = IKH @ covariance @ IKH.T + K @ R_pred @ K.T
 
         return new_mean, new_covariance, new_F
 
