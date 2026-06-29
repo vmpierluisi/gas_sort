@@ -102,3 +102,19 @@ MOT17/
 cache/
 results/
 detections/
+
+# Local-only filter experiments (kept locally, not published)
+filters/ext_kalman_filter.py
+filters/gas_filter_pred_x.py
+filters/gas_filter_x.py
+filters/unsc_kalman_filter.py
+
+# Local-only visualization script (kept locally, not published)
+tests/tracking_vis.py
+
+# Local-only result-visualization helpers (kept locally, not published)
+generate_videos.py
+show_results.py
+
+# Local-only legacy TensorFlow detection tools (kept locally, not published)
+tools/

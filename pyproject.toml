@@ -1,0 +1,17 @@
+[project]
+name = "deepgas"
+version = "0.1.0"
+description = "DeepSORT with adaptive GAS motion filters for multi-object tracking"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "numpy==1.26.4",
+    "scipy==1.17.1",
+    "pandas==3.0.1",
+    "opencv-python==4.11.0.86",
+    "motmetrics==1.4.0",
+    "torch==2.10.0",
+    "torchvision==0.25.0",
+    "torchreid==0.2.5",
+    "ultralytics==8.4.21",
+]
