@@ -1,119 +1,175 @@
-# Deep SORT
+# DeepGAS
 
-## Introduction
+DeepGAS extends [DeepSORT](https://arxiv.org/abs/1703.07402) multi-object
+tracking with **adaptive, score-driven generalized autoregressive score (GAS)
+motion filters** as a drop-in alternative to the classic Kalman filter (KF). The goal
+is to study whether adaptive motion modelling improves pedestrian tracking on the
+[MOT17 benchmark](https://motchallenge.net/data/MOT17/).
 
-This repository contains code for *Simple Online and Realtime Tracking with a Deep Association Metric* (Deep SORT).
-We extend the original [SORT](https://github.com/abewley/sort) algorithm to
-integrate appearance information based on a deep appearance descriptor.
-See the [arXiv preprint](https://arxiv.org/abs/1703.07402) for more information.
+> Master's thesis by **Victor Medina Pierluisi** — MSc Econometrics and Data Science, VU Amsterdam (2026).
+
+## Pipeline
+
+The tracker is a modern, PyTorch-based reimplementation of DeepSORT:
+
+- **Detection** — [YOLOv8n](https://github.com/ultralytics/ultralytics)
+  (`weights/yolov8n.pt`).
+- **Appearance embedding** — OSNet (`osnet_ain_x1_0`, MSMT17) via
+  [torchreid](https://github.com/KaiyangZhou/deep-person-reid)
+  (`weights/osnet_ain_x1_0_msmt17_256x128.pth`).
+- **Association** — matching cascade combining cosine distance on appearance
+  embeddings with IoU, exactly as in DeepSORT.
+- **Motion model** — pluggable filter selected at runtime (see below). This is
+  the contribution of the thesis.
+
+Computation runs on Apple Silicon (MPS) when available, otherwise CPU.
 
 ## Installation
 
-First, clone the repository and install dependencies:
-```
-git clone https://github.com/nwojke/deep_sort.git
-cd deep_sort
+This project uses [uv](https://docs.astral.sh/uv/). It pins the exact dependency
+versions used to produce the thesis results (`pyproject.toml` + `uv.lock`).
 
-# The following command installs all the dependencies required to run the
-# tracker and regenerate detections. If you only need to run the tracker with
-# existing detections, you can use pip install -r requirements.txt instead.
-pip install -r requirements-gpu.txt
+```bash
+git clone https://github.com/vmpierluisi/gas_sort.git
+cd gas_sort
+uv sync
 ```
-Then, download pre-generated detections and the CNN checkpoint file from
-[here](https://drive.google.com/open?id=18fKzfqnqhqW3s9zwsCbnVJ5XF2JFeqMp).
 
-*NOTE:* The candidate object locations of our pre-generated detections are
-taken from the following paper:
-```
-F. Yu, W. Li, Q. Li, Y. Liu, X. Shi, J. Yan. POI: Multiple Object Tracking with
-High Performance Detection and Appearance Feature. In BMTT, SenseTime Group
-Limited, 2016.
-```
-We have replaced the appearance descriptor with a custom deep convolutional
-neural network (see below).
+This creates a `.venv` with Python 3.11–3.13 and all dependencies (PyTorch,
+torchreid, ultralytics, OpenCV, motmetrics, …). Run commands with `uv run` or
+activate the environment with `source .venv/bin/activate`.
 
-## Running the tracker
+### Weights
 
-The following example starts the tracker on one of the
-[MOT16 benchmark](https://motchallenge.net/data/MOT16/)
-sequences.
-We assume resources have been extracted to the repository root directory and
-the MOT16 benchmark data is in `./MOT16`:
+The model weights are committed to the repository under `weights/`:
+
+- `weights/yolov8n.pt` — YOLOv8n detector.
+- `weights/osnet_ain_x1_0_msmt17_256x128.pth` — OSNet appearance descriptor.
+
+### Dataset
+
+The MOT17 dataset is **not** included in the repository (it is several GB). A
+prepared copy is hosted on Google Drive:
+
+**[⬇️ Download MOT17 (Google Drive)](https://drive.google.com/file/d/1ISbDglNjn28AXDYi1AJvtHqWnvKdVKT_/view?usp=drive_link)**
+
+Download `MOT17.zip` from the link above and unzip it into the repository root.
+From the command line you can use [`gdown`](https://github.com/wkentaro/gdown):
+
+```bash
+uvx gdown 1ISbDglNjn28AXDYi1AJvtHqWnvKdVKT_     # or: pip install gdown && gdown 1ISbDglNjn28AXDYi1AJvtHqWnvKdVKT_
+unzip MOT17.zip                                 # extracts ./MOT17 into the repo root
 ```
-python deep_sort_app.py \
-    --sequence_dir=./MOT16/test/MOT16-06 \
-    --detection_file=./resources/detections/MOT16_POI_test/MOT16-06.npy \
+
+The dataset is also available from the official source at
+[motchallenge.net](https://motchallenge.net/data/MOT17/).
+
+Either way, extract it so the final layout is:
+
+```
+MOT17/
+├── train/
+│   ├── MOT17-02-FRCNN/
+│   │   ├── img1/
+│   │   ├── gt/gt.txt
+│   │   └── seqinfo.ini
+│   └── ...
+└── test/
+```
+
+## Motion filters
+
+The motion model is selected with `--filter`. Available choices:
+
+| `--filter`    | Description                                              |
+|---------------|----------------------------------------------------------|
+| `kf-ca`       | KF, constant-acceleration model (default)                |
+| `kf-cv`       | KF, constant-velocity model                              |
+| `gas-f`       | Hybrid GAS filter with KF updates, constant-acceleration |
+| `gas-f-cv`    | Hybrid GAS filter with KF updates, constant-velocity     |
+| `gas-pred-f`  | Pure GAS-F filter                                        |
+| `gas-local`   | Pure Gaussian location filter                            |
+
+The filter implementations live in `filters/`. `deep_sort/tracker.py:build_filter`
+maps each name to its class.
+
+### Covariance update in `gas-f` / `gas-f-cv`
+
+The hybrid GAS filters (`gas-f`, `gas-f-cv`) support two covariance update rules,
+to be chosen the filter source file. By default they use the **custom filtered covariance**:
+
+```python
+new_covariance = new_F @ covariance @ new_F.T + Q
+```
+
+To use the standard **Joseph-form KF covariance update** instead, edit
+`filters/gas_filter_f.py` (or `filters/gas_filter_f_cv.py`): comment out the line
+above and uncomment the two Joseph-form lines directly below it:
+
+```python
+IKH = np.eye(12) - K @ H            # np.eye(8) in gas_filter_f_cv.py
+new_covariance = IKH @ covariance @ IKH.T + K @ R_pred @ K.T
+```
+
+Only one of the two rules should be active at a time.
+
+## Running the tracker on a single sequence
+
+```bash
+uv run python deep_sort_app.py \
+    --sequence_dir=./MOT17/train/MOT17-09-FRCNN \
+    --output_file=./results/MOT17-09-FRCNN.txt \
     --min_confidence=0.3 \
     --nn_budget=100 \
+    --filter=gas-f \
     --display=True
 ```
-Check `python deep_sort_app.py -h` for an overview of available options.
-There are also scripts in the repository to visualize results, generate videos,
-and evaluate the MOT challenge benchmark.
 
-## Generating detections
+Run `uv run python deep_sort_app.py -h` for all options (detection confidence,
+NMS overlap, cosine gating threshold, etc.). With `--display=True` the tracker
+shows the live visualization.
 
-Beside the main tracking application, this repository contains a script to
-generate features for person re-identification, suitable to compare the visual
-appearance of pedestrian bounding boxes using cosine similarity.
-The following example generates these features from standard MOT challenge
-detections. Again, we assume resources have been extracted to the repository
-root directory and MOT16 data is in `./MOT16`:
+## Evaluating on MOT17
+
+`evaluate_motchallenge.py` runs the tracker over every sequence in a MOT
+directory and reports the standard MOTChallenge metrics (MOTA, IDF1, etc.) via
+[motmetrics](https://github.com/cheind/py-motmetrics):
+
+```bash
+uv run python evaluate_motchallenge.py \
+    --mot_dir=./MOT17/train \
+    --output_dir=./results \
+    --filter=gas-f \
+    --min_confidence=0.3 \
+    --nn_budget=100
 ```
-python tools/generate_detections.py \
-    --model=resources/networks/mars-small128.pb \
-    --mot_dir=./MOT16/train \
-    --output_dir=./resources/detections/MOT16_train
+
+Per-sequence tracking outputs are written to `--output_dir` in MOTChallenge
+format, and a summary table is printed at the end.
+
+## Repository layout
+
 ```
-The model has been generated with TensorFlow 1.5. If you run into
-incompatibility, re-export the frozen inference graph to obtain a new
-`mars-small128.pb` that is compatible with your version:
+deep_sort_app.py            Run the tracker on one sequence
+evaluate_motchallenge.py    Run + score the tracker across a MOT directory
+deep_sort/                  Core tracker (detection, matching, track, tracker)
+  detect_yolo.py            YOLO detection + OSNet embedding extraction
+  nn_matching.py            Nearest-neighbour cosine metric
+  linear_assignment.py      Matching cascade / min-cost assignment
+  iou_matching.py           IoU association
+  track.py / tracker.py     Track lifecycle and multi-target tracker
+filters/                    Pluggable motion filters (Kalman + GAS variants)
+application_util/           Visualization and pre-processing helpers
+weights/                    YOLO and OSNet model weights
 ```
-python tools/freeze_model.py
-```
-The ``generate_detections.py`` stores for each sequence of the MOT16 dataset
-a separate binary file in NumPy native format. Each file contains an array of
-shape `Nx138`, where N is the number of detections in the corresponding MOT
-sequence. The first 10 columns of this array contain the raw MOT detection
-copied over from the input file. The remaining 128 columns store the appearance
-descriptor. The files generated by this command can be used as input for the
-`deep_sort_app.py`.
 
-**NOTE**: If ``python tools/generate_detections.py`` raises a TensorFlow error,
-try passing an absolute path to the ``--model`` argument. This might help in
-some cases.
+Generated artifacts (`results/`, `detections/`, `cache/`) and the `MOT17/`
+dataset are git-ignored.
 
-## Training the model
+## Acknowledgements & citing
 
-To train the deep association metric model we used a novel [cosine metric learning](https://github.com/nwojke/cosine_metric_learning) approach which is provided as a separate repository.
-
-## Highlevel overview of source files
-
-In the top-level directory are executable scripts to execute, evaluate, and
-visualize the tracker. The main entry point is in `deep_sort_app.py`.
-This file runs the tracker on a MOTChallenge sequence.
-
-In package `deep_sort` is the main tracking code:
-
-* `detection.py`: Detection base class.
-* `kalman_filter.py`: A Kalman filter implementation and concrete
-   parametrization for image space filtering.
-* `linear_assignment.py`: This module contains code for min cost matching and
-   the matching cascade.
-* `iou_matching.py`: This module contains the IOU matching metric.
-* `nn_matching.py`: A module for a nearest neighbor matching metric.
-* `track.py`: The track class contains single-target track data such as Kalman
-  state, number of hits, misses, hit streak, associated feature vectors, etc.
-* `tracker.py`: This is the multi-target tracker class.
-
-The `deep_sort_app.py` expects detections in a custom format, stored in .npy
-files. These can be computed from MOTChallenge detections using
-`generate_detections.py`. We also provide
-[pre-generated detections](https://drive.google.com/open?id=1VVqtL0klSUvLnmBKS89il1EKC3IxUBVK).
-
-## Citing DeepSORT
-
-If you find this repo useful in your research, please consider citing the following papers:
+This work builds on DeepSORT by Wojke et al. If you use this code, please cite
+the original papers:
 
     @inproceedings{Wojke2017simple,
       title={Simple Online and Realtime Tracking with a Deep Association Metric},
@@ -134,3 +190,7 @@ If you find this repo useful in your research, please consider citing the follow
       organization={IEEE},
       doi={10.1109/WACV.2018.00087}
     }
+
+## License
+
+See [LICENSE](LICENSE).
