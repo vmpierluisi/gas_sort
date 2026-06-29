@@ -2,34 +2,25 @@
 from __future__ import absolute_import
 import numpy as np
 from filters.base_filter import BaseFilter
-from filters.kalman_filter import KalmanFilter
+from filters.kalman_filter_ca import KalmanFilter
 from . import linear_assignment
 from . import iou_matching
 from .track import Track
 
 
 def build_filter(name: str) -> BaseFilter:
-    if name == "kf":
-        from filters.kalman_filter import KalmanFilter
+    if name == "kf-ca":
+        from filters.kalman_filter_ca import KalmanFilter
         return KalmanFilter()
-    elif name == "ekf":
-        from filters.ext_kalman_filter import ExtendedKalmanFilter
-        return ExtendedKalmanFilter()
-    elif name == "ukf":
-        from filters.unsc_kalman_filter import UnscentedKalmanFilter
-        return UnscentedKalmanFilter()
-    elif name == "gas-x":
-        from filters.gas_filter_x import GASFilter
-        return GASFilter()
+    elif name == "kf-cv":
+        from filters.kalman_filter_cv import KalmanFilter
+        return KalmanFilter()
     elif name == "gas-f":
         from filters.gas_filter_f import GASFilter
         return GASFilter()
     elif name == "gas-f-cv":
         from filters.gas_filter_f_cv import GASFilter
         return GASFilter()
-    elif name == "gas-pred-x":
-        from filters.gas_filter_pred_x import GASFilterPred
-        return GASFilterPred()
     elif name == "gas-pred-f":
         from filters.gas_filter_pred_f import GASFilterPred
         return GASFilterPred()
