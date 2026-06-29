@@ -218,11 +218,11 @@ class GASFilter(BaseFilter):
 
         # Update mean and covariance
         new_mean = mean + K @ innovation
-        #new_covariance = new_F @ covariance @ new_F.T + Q
+        new_covariance = new_F @ covariance @ new_F.T + Q
 
         # Joseph form KF covariance update
-        IKH = np.eye(8) - K @ H
-        new_covariance = IKH @ covariance @ IKH.T + K @ R_pred @ K.T
+        #IKH = np.eye(8) - K @ H
+        #new_covariance = IKH @ covariance @ IKH.T + K @ R_pred @ K.T
 
         return new_mean, new_covariance, new_F
 

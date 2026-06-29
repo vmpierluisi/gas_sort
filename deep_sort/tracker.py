@@ -16,7 +16,7 @@ def build_filter(name: str) -> BaseFilter:
         from filters.kalman_filter_cv import KalmanFilter
         return KalmanFilter()
     elif name == "gas-f":
-        from filters.gas_filter_f import GASFilter
+        from filters.gas_filter_f_ca import GASFilter
         return GASFilter()
     elif name == "gas-f-cv":
         from filters.gas_filter_f_cv import GASFilter
