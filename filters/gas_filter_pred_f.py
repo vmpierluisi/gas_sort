@@ -24,27 +24,21 @@ class GASFilterPred(BaseFilter):
     GAS(1, 1)  filter with a constant acceleration (CA) motion model.
 
     State vector (12-dim):
-        x = [x, y, a, h, x', y', a', h', x'', y'', a'', h'']
+        q = [x, y, a, h, x', y', a', h', x'', y'', a'', h'']
     where (x, y) is bounding box centre, a = w/h, h is height.
 
     Measurement vector (4-dim):
         z = [x, y, a, h]
 
     GAS System:
-        x_k = Fx_{k-1} + w_k, with w ~ N(0, Q)
-        z_k = Hx_{k-1} + v_k, with v ~ N(0, R)
+        q_t = Fq_{t-1} + w_t, with w ~ N(0, Q)
+        z_t = Hx_{t-1} + v_t, with v ~ N(0, R)
 
         Prediction:
-        x_k|k-1 = Fx_{k-1}
-        P_k|k-1 = F @ P_k-1 @ F.T + Q
+        q_t|t-1 = Fq_{t-1}
+        P_t|t-1 = F @ P_t-1 @ F.T + Q
 
-        Update:
-            Inverse Fisher information using score wrt x = Kalman gain
-        K_k = P_k|k-1 @ H.T @ (H @ P_k|k-1 @ H.T + R)^-1
-            Optimal GAS mean update follows Kalman filter update
-        x_k = x_k|k-1 + K_k (z_k - H @ x_k|k-1)
-            Optimal covariance update follows a observation-driven GAS consistent covariance
-        P_k = F @ P_k|k-1 @ F.T + Q
+
     """
 
     def __init__(self, alpha=0.1, beta=0.8):
@@ -126,12 +120,11 @@ class GASFilterPred(BaseFilter):
 
         Returns
         -------
-        mean : ndarray, shape (12,)
+        mean : ndarray, shape (4,)
             Initial state.  Positions from measurement; velocities and
             accelerations set to zero.
-        covariance : ndarray, shape (12, 12)
-            Initial covariance.  Velocities/accelerations get 10x larger
-            std-dev to reflect high uncertainty from a single frame.
+        covariance : ndarray, shape (4, 4)
+            Initial covariance. 
         F0 : ndarray, shape (12, 12)
             Initial transition matrix (the constant-acceleration default).
         """

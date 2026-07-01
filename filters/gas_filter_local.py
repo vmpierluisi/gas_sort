@@ -21,30 +21,17 @@ chi2inv95 = {
 
 class GASFilterPred(BaseFilter):
     """
-    GAS(1, 1)  filter with a constant acceleration (CA) motion model.
+    Gaussian location filter (no motion model).
 
-    State vector (12-dim):
-        x = [x, y, a, h, x', y', a', h', x'', y'', a'', h'']
+    State vector (4-dim):
+        q = [x, y, a, h]
     where (x, y) is bounding box centre, a = w/h, h is height.
 
     Measurement vector (4-dim):
         z = [x, y, a, h]
 
-    GAS System:
-        x_k = Fx_{k-1} + w_k, with w ~ N(0, Q)
-        z_k = Hx_{k-1} + v_k, with v ~ N(0, R)
-
-        Prediction:
-        x_k|k-1 = Fx_{k-1}
-        P_k|k-1 = F @ P_k-1 @ F.T + Q
-
-        Update:
-            Inverse Fisher information using score wrt x = Kalman gain
-        K_k = P_k|k-1 @ H.T @ (H @ P_k|k-1 @ H.T + R)^-1
-            Optimal GAS mean update follows Kalman filter update
-        x_k = x_k|k-1 + K_k (z_k - H @ x_k|k-1)
-            Optimal covariance update follows a observation-driven GAS consistent covariance
-        P_k = F @ P_k|k-1 @ F.T + Q
+    Gaussian location filter:
+        mu_t = alpha * (z_t - mu_t) + beta * mu_t-1
     """
 
     def __init__(self, alpha=1, beta=1):
@@ -52,9 +39,9 @@ class GASFilterPred(BaseFilter):
         Parameters
         ----------
         alpha : float
-            GAS learning rate — scales the score contribution to F_t.
+            GAS learning rate — scales the innovation (z_t - mu) into mu_t.
         beta : float
-            GAS smoothing weight — controls how much of F_{t-1} carries over.
+            GAS smoothing weight — controls how much of mu_t-1 carries over.
         """
         self._measurement_matrix = np.eye(4, 12)
 
@@ -62,43 +49,22 @@ class GASFilterPred(BaseFilter):
         self.alpha = alpha
         self.beta = beta
 
-        # Motion and observation uncertainty are chosen relative to the current
-        # state estimate. These weights control the amount of uncertainty in
-        # the model.
-        self._std_weight_position     = 1 / 20    # position noise
-        self._std_weight_velocity     = 1 / 160   # velocity noise
-        self._std_weight_acceleration = 1 / 1280  # acceleration noise
-        self._std_weight_aspect_p     = 1e-2     # aspect-ratio position noise
-        self._std_weight_aspect_v     = 1e-3      # aspect-ratio velocity noise
-        self._std_weight_aspect_a     = 1e-4      # aspect-ratio acceleration noise
+        # Observation uncertainty is chosen relative to the current state
+        # estimate. This filter has no motion model, so only the measurement
+        # (position/aspect) noise weights are needed.
+        self._std_weight_position = 1 / 20    # position noise
+        self._std_weight_aspect_p = 1e-2      # aspect-ratio position noise
 
-    def _noise_matrices(self, mean):
+    def _measurement_noise(self, mean):
         """
-        Build Q (motion_noise) and R (obs_noise) scaled by the current track height.
+        Build R (obs_noise), a 4x4 diagonal scaled by the current track height.
         """
         h = mean[3]
-        # Calculating the measurement noise matrix
         var_measure = np.array([(self._std_weight_position*h)**2,
                                 (self._std_weight_position*h)**2,
                                  self._std_weight_aspect_p**2,
                                 (self._std_weight_position*h)**2])
-        # Calculating the transition noise matrix
-        var_trans = np.array([(self._std_weight_position*h)**2,
-                              (self._std_weight_position*h)**2,
-                               self._std_weight_aspect_p**2,
-                              (self._std_weight_position*h)**2,
-                              (self._std_weight_velocity*h)**2,
-                              (self._std_weight_velocity*h)**2,
-                               self._std_weight_aspect_v**2,
-                              (self._std_weight_velocity*h)**2,
-                              (self._std_weight_acceleration*h)**2,
-                              (self._std_weight_acceleration*h)**2,
-                               self._std_weight_aspect_a**2,
-                              (self._std_weight_acceleration*h)**2
-                              ])
-        Q = np.diag(var_trans)
-        R = np.diag(var_measure)
-        return Q, R
+        return np.diag(var_measure)
 
     def initiate(self, measurement):
         """
@@ -113,34 +79,23 @@ class GASFilterPred(BaseFilter):
         -------
         mean : ndarray, shape (12,)
             Initial state.  Positions from measurement; velocities and
-            accelerations set to zero.
-        covariance : ndarray, shape (12, 12)
-            Initial covariance.  Velocities/accelerations get 10x larger
-            std-dev to reflect high uncertainty from a single frame.
-        F0 : ndarray, shape (12, 12)
-            Initial transition matrix (the constant-acceleration default).
+            accelerations left at zero (unused by this location filter).
+        covariance : ndarray, shape (4, 4)
+            Initial position/aspect covariance.
         """
         h = measurement[3]
 
         mean = np.zeros(12)
         mean[:4] = measurement[:4]
 
-        # Initial covariance: 2x std for positions, 10x std for vel/acc
-        init_var_trans = np.array([
-            (2  * self._std_weight_position     * h)**2,
-            (2  * self._std_weight_position     * h)**2,
-            (2  * self._std_weight_aspect_p        )**2,
-            (2  * self._std_weight_position     * h)**2,
-            (10 * self._std_weight_velocity     * h)**2,
-            (10 * self._std_weight_velocity     * h)**2,
-            (10 * self._std_weight_aspect_v        )**2,
-            (10 * self._std_weight_velocity     * h)**2,
-            (10 * self._std_weight_acceleration * h)**2,
-            (10 * self._std_weight_acceleration * h)**2,
-            (10 * self._std_weight_aspect_a        )**2,
-            (10 * self._std_weight_acceleration * h)**2,
+        
+        init_var = np.array([
+            (2 * self._std_weight_position * h)**2,
+            (2 * self._std_weight_position * h)**2,
+            (2 * self._std_weight_aspect_p    )**2,
+            (2 * self._std_weight_position * h)**2,
         ])
-        covariance = np.diag(init_var_trans)
+        covariance = np.diag(init_var)
 
         return mean, covariance, None
 
@@ -154,19 +109,18 @@ class GASFilterPred(BaseFilter):
             The 12 dimensional mean vector of the object state at the previous
             time step.
         covariance : ndarray
-            The 12x12 dimensional covariance matrix of the object state at the
+            The 4x4 dimensional covariance matrix of the object state at the
             previous time step.
 
         Returns
         -------
         (ndarray, ndarray)
-            Returns the mean vector and covariance matrix of the predicted
-            state. Unobserved velocities and accelerations are initialized to 0 mean.
+            The mean vector and covariance matrix, returned unchanged — this
+            location filter has no motion model to propagate.
 
         """
-
-        pass
-
+        # No motion model: the location filter leaves the state unchanged and
+        # relies entirely on the measurement update.
         return mean, covariance, None
 
     def update(self, mean, covariance, measurement, F=None):
@@ -178,7 +132,7 @@ class GASFilterPred(BaseFilter):
         mean : ndarray
             The predicted state's mean vector (12 dimensional).
         covariance : ndarray
-            The state's covariance matrix (12x12 dimensional).
+            The state's covariance matrix (4x4 dimensional).
         measurement : ndarray
             The 4 dimensional measurement vector (x, y, a, h), where (x, y)
             is the center position, a the aspect ratio, and h the height of the
@@ -200,7 +154,7 @@ class GASFilterPred(BaseFilter):
         new_mean = mean.copy()
         new_mean[:4] = self.alpha * innovation + self.beta * (H @ mean)
 
-        _, new_covariance = self._noise_matrices(mean)
+        new_covariance = self._measurement_noise(mean)
 
         return new_mean, new_covariance, None
 
@@ -216,13 +170,13 @@ class GASFilterPred(BaseFilter):
         Parameters
         ----------
         mean : ndarray
-            Mean vector over the state distribution (12 dimensional).
+            Mean vector over the state distribution (12 dimensional; projected
+            to 4 dimensions internally via the measurement matrix).
         covariance : ndarray
-            Covariance of the state distribution (12x12 dimensional).
+            Covariance of the state distribution (4x4 dimensional).
         measurements : ndarray
             An Nx4 dimensional matrix of N measurements, each in
-            format (x, y, a, h) where (x, y) is the bounding box center
-            position, a the aspect ratio, and h the height.
+            format (x, y, a, h)
         only_position : Optional[bool]
             If True, distance computation is done with respect to the bounding
             box center position only.

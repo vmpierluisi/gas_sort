@@ -22,18 +22,27 @@ chi2inv95 = {
 
 class KalmanFilter(object):
     """
-    A simple Kalman filter for tracking bounding boxes in image space.
+     Standard linear Kalman filter with a constant acceleration (CV) motion model.
 
-    The 8-dimensional state space
+    State vector (12-dim):
+        q = [x, y, a, h, x', y', a', h']
+    where (x, y) is bounding box centre, a = w/h, h is height.
 
-        x, y, a, h, vx, vy, va, vh
+    Measurement vector (4-dim):
+        z = [x, y, a, h]
 
-    contains the bounding box center position (x, y), aspect ratio a, height h,
-    and their respective velocities.
+    KF System:
+        q_t = Fq_{t-1} + w_t, with w ~ N(0, Q)
+        z_t = Hq_{t-1} + v_t, with v ~ N(0, R)
 
-    Object motion follows a constant velocity model. The bounding box location
-    (x, y, a, h) is taken as direct observation of the state space (linear
-    observation model).
+        Prediction:
+        q_t|t-1 = Fq_{t-1}
+        P_t|t-1 = F @ P_k-1 @ F.T + Q
+
+        Update:
+        K_t = P_t|t-1 @ H.T @ (H @ P_t|t-1 @ H.T + R)^-1
+        q_t = q_t|t-1 + K_t (z_t - H @ q_t|t-1)
+        P_t = (I - K_t @ H) @ P_t|t-1
 
     """
 
